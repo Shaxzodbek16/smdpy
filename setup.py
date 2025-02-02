@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="smdpy",
-    version="0.1.0",
+    version="0.0.1",
     author="Muxtorov Shaxzodbek",
     author_email="muxtorovshaxzodbek16@gmail.com",
     description="It is download videos and audios from social media. That is why it is called smdpy",
