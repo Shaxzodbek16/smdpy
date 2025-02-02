@@ -1,21 +1,19 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="my_pipit_project",
+    name="smdpy",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="A short description of your project",
+    author="Muxtorov Shaxzodbek",
+    author_email="muxtorovshaxzodbek16@gmail.com",
+    description="It is download videos and audios from social media. That is why it is called smdpy",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/my_pipit_project",
+    url="https://github.com/Shaxzodbek16/smdpy",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires=">=3.6",
     install_requires=[
-        "pipit",
-        "pandas",
-        "numpy",
+        'requests',
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
