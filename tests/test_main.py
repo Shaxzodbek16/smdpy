@@ -1,5 +1,5 @@
 import unittest
-from src.main import github
+from src.youtube.main import github
 
 
 class TestMain(unittest.TestCase):
