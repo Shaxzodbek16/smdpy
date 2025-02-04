@@ -11,46 +11,19 @@ class YouTube:
       - get available video resolutions (as labels like '720p', '1080p60')
       - download video in chosen resolution
       - download audio as MP3
-
-    Attributes
-    ----------
-    url : str
-        The YouTube URL to download from.
-    info_cache : dict
-        Internal cache for metadata after extracting info with yt-dlp.
-
-    Examples
-    --------
-    >>> yt = YouTube("https://youtu.be/dQw4w9WgXcQ")
-    >>> print(yt.get_available_resolutions())
-    ['144p', '240p', '360p', '720p']
-    >>> yt.download_video(path="videos", name="my_video", resolution_label="720p")
-    {'success': True, 'filepath': 'videos/my_video.mp4', 'message': 'Downloaded 720p successfully'}
-    >>> yt.download_audio_mp3(path="audios", name="my_audio", quality="192")
-    {'success': True, 'filepath': 'audios/my_audio.mp3', 'message': 'Downloaded MP3 successfully'}
     """
 
     def __init__(self, url: str):
         """
-        Initialize the YouTube class with a given video URL.
-
-        Parameters
-        ----------
-        url : str
-            The full YouTube video URL (e.g., https://youtu.be/xxxx).
+        Initialize with a YouTube video URL.
         """
         self.url = url
         self.info_cache: Dict[str, Any] = {}
 
     def _extract_info(self) -> Dict[str, Any]:
         """
-        Use yt-dlp to extract metadata and format info for the video (no download).
-        We store the result in `self.info_cache` so we don't re-extract multiple times.
-
-        Returns
-        -------
-        Dict[str, Any]
-            A dictionary of video metadata, including 'formats'.
+        Use yt-dlp to extract metadata (no download).
+        Caches the info so we only run extract once.
         """
         if not self.info_cache:
             ydl_opts = {
@@ -63,93 +36,86 @@ class YouTube:
 
     def get_available_resolutions(self) -> List[str]:
         """
-        Get a sorted list of all available video resolution labels (e.g. ['144p', '720p60']).
-
-        Returns
-        -------
-        List[str]
-            Sorted resolution labels like ['144p', '360p', '720p', '720p60', '1080p60'].
+        Return a sorted list of resolution labels like ["360p", "720p60", "1080p60"].
         """
         info = self._extract_info()
         formats = info.get('formats', [])
         resolution_labels = set()
 
         for f in formats:
-            # Only consider entries that have video (vcodec != 'none')
             if f.get('vcodec') != 'none':
                 height = f.get('height')
                 fps = f.get('fps')
                 if height:
                     label = f"{height}p"
-                    # If fps is higher than ~30, append e.g. '60'
+                    # If fps is > 30, append it e.g. "60"
                     if fps and fps > 30:
                         label += str(int(fps))
                     resolution_labels.add(label)
 
+        # Sort by the height number (e.g. "1080" in "1080p60")
         def resolution_key(lbl: str) -> int:
-            # Extract the integer before 'p', e.g. "720p60" -> 720
             match_num = re.search(r'(\d+)p', lbl)
             return int(match_num.group(1)) if match_num else 0
 
-        return sorted(list(resolution_labels), key=resolution_key)
+        return sorted(resolution_labels, key=resolution_key)
 
     def download_video(self, path: str, name: str, resolution_label: str) -> Dict[str, Any]:
         """
-        Download the YouTube video in a chosen resolution. If it's an adaptive format,
-        yt-dlp merges the best audio track automatically into MP4.
-
-        Parameters
-        ----------
-        path : str
-            The directory to save the downloaded file.
-        name : str
-            Filename (without extension) for the saved video.
-        resolution_label : str
-            Desired resolution label, e.g. "360p", "720p", "720p60", "1080p60".
-
-        Returns
-        -------
-        Dict[str, Any]
-            {
-                "success": bool,         # True if download succeeded, else False
-                "filepath": str,         # Path to the downloaded .mp4 file
-                "message": str           # Brief status message
-            }
-
-        Raises
-        ------
-        ValueError
-            If the requested resolution isn't available.
+        Download the video at the chosen resolution/fps label, e.g. "1080p60".
         """
         info = self._extract_info()
-        formats = info.get('formats', [])
+        all_formats = info.get('formats', [])
 
-        # Build a dict of label -> list of format_ids
-        label_to_fids = {}
-        for f in formats:
-            if f.get('vcodec') != 'none':
-                h = f.get('height')
-                fps = f.get('fps', 30)
-                if h:
-                    lbl = f"{h}p"
-                    if fps > 30:
-                        lbl += str(int(fps))
-                    label_to_fids.setdefault(lbl, []).append(f['format_id'])
+        # Parse the label "1080p60" => height=1080, fps=60
+        match = re.match(r'(\d+)p(\d+)?', resolution_label)
+        if not match:
+            return {
+                "success": False,
+                "filepath": "",
+                "message": f"Invalid resolution label '{resolution_label}'"
+            }
 
-        if resolution_label not in label_to_fids:
-            available = list(label_to_fids.keys())
-            raise ValueError(f"No format found for '{resolution_label}'. "
-                             f"Available resolutions: {available}")
+        height_str, fps_str = match.groups()
+        target_height = int(height_str)
+        target_fps = int(fps_str) if fps_str else None
 
-        # Pick the first format_id for that label
-        chosen_format_id = label_to_fids[resolution_label][0]
+        # Collect all formats that match this height (and fps if specified)
+        matching_formats = []
+        for f in all_formats:
+            if f.get('vcodec') == 'none':  # audio-only
+                continue
 
-        # Construct yt-dlp options
+            if f.get('height') == target_height:
+                if target_fps:
+                    # Allow small tolerance in case it's e.g. 59.94 vs 60
+                    if f.get('fps') and abs(f['fps'] - target_fps) < 2:
+                        matching_formats.append(f)
+                else:
+                    # No specific fps requirement
+                    matching_formats.append(f)
+
+        if not matching_formats:
+            return {
+                "success": False,
+                "filepath": "",
+                "message": (
+                    f"No format found for '{resolution_label}'. Possibly the video "
+                    f"doesn't have that exact resolution/fps."
+                )
+            }
+
+        # Pick the best candidate by highest total bitrate (tbr)
+        matching_formats.sort(key=lambda x: x.get('tbr') or 0, reverse=True)
+        chosen_format_id = matching_formats[0]['format_id']
+
+        # Build yt-dlp options
+        outtmpl = os.path.join(path, f"{name}.%(ext)s")
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'format': f"{chosen_format_id}+bestaudio/best",
-            'outtmpl': os.path.join(path, f"{name}.%(ext)s"),
+            'outtmpl': outtmpl,
             'merge_output_format': 'mp4',
         }
 
@@ -159,6 +125,7 @@ class YouTube:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([self.url])
+
             return {
                 "success": True,
                 "filepath": final_filepath,
@@ -173,25 +140,7 @@ class YouTube:
 
     def download_audio_mp3(self, path: str, name: str, quality: str = "192") -> Dict[str, Any]:
         """
-        Download audio from the YouTube video as an MP3 file, using FFmpeg.
-
-        Parameters
-        ----------
-        path : str
-            The directory to save the MP3 file.
-        name : str
-            Filename (without extension) for the saved audio.
-        quality : str, optional
-            MP3 bitrate (e.g. "128", "192", "320"), default "192".
-
-        Returns
-        -------
-        Dict[str, Any]
-            {
-                "success": bool,         # True if download succeeded, else False
-                "filepath": str,         # Path to the downloaded .mp3 file
-                "message": str           # Brief status message
-            }
+        Download only the audio track as an MP3.
         """
         ydl_opts = {
             'quiet': True,
@@ -215,7 +164,7 @@ class YouTube:
             return {
                 "success": True,
                 "filepath": final_filepath,
-                "message": f"Downloaded MP3 successfully"
+                "message": "Downloaded MP3 successfully"
             }
         except Exception as e:
             return {
